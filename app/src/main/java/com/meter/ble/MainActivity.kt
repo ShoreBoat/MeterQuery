@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -76,10 +77,22 @@ class MainActivity : AppCompatActivity(), BleManager.Listener {
         readBtn.setOnClickListener { readOnce() }
         ll.addView(readBtn)
 
-        val pollBtn = Button(this).apply { text = "开始定时监控" }
+        val pollBtn = Button(this).apply {
+            text = if (MeterService.running) "停止后台监控" else "开始后台监控(锁屏也跑)"
+        }
         pollBtn.setOnClickListener {
-            if (!polling) { polling = true; pollBtn.text = "停止监控"; startPolling() }
-            else { polling = false; pollBtn.text = "开始定时监控"; handler.removeCallbacksAndMessages(null) }
+            if (!MeterService.running) {
+                saveConfig()
+                val i = Intent(this, MeterService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                    startForegroundService(i) else startService(i)
+                pollBtn.text = "停止后台监控"
+                onLog("后台监控已开启,每 ${intervalInput.text} 分钟查一次,锁屏也运行")
+            } else {
+                stopService(Intent(this, MeterService::class.java))
+                pollBtn.text = "开始后台监控(锁屏也跑)"
+                onLog("后台监控已停止")
+            }
         }
         ll.addView(pollBtn)
 
@@ -97,21 +110,16 @@ class MainActivity : AppCompatActivity(), BleManager.Listener {
 
     private fun readOnce() {
         resultView.text = "查询中..."
+        saveConfig()
         val cmd = MeterProtocol.buildCommand(addrInput.text.toString())
         ble.readOnce(addrInput.text.toString(), nameInput.text.toString(), cmd, this)
     }
 
-    private fun startPolling() {
-        val intervalMin = intervalInput.text.toString().toLongOrNull() ?: 60
-        val task = object : Runnable {
-            override fun run() {
-                if (!polling) return
-                readOnce()
-                handler.postDelayed(this, intervalMin * 60_000)
-            }
-        }
-        handler.post(task)
-        onLog("定时监控已开启，每 ${intervalMin} 分钟一次")
+    private fun saveConfig() {
+        val addr = addrInput.text.toString()
+        val th = thresholdInput.text.toString().toDoubleOrNull() ?: 10.0
+        val interval = intervalInput.text.toString().toLongOrNull() ?: 60
+        MeterStore.saveConfig(this, addr, th, interval)
     }
 
     // ---- BleManager.Listener ----
@@ -130,6 +138,7 @@ class MainActivity : AppCompatActivity(), BleManager.Listener {
         runOnUiThread {
             try {
                 val r = MeterProtocol.parseResponse(rawHex)
+                r.leftKwh?.let { l -> MeterStore.save(this, l, r.totalKwh ?: -1.0); MeterWidget.refresh(this) }
                 val sb = StringBuilder()
                 sb.append("剩余电量: ${r.leftKwh} 度\n")
                 sb.append("总用量: ${r.totalKwh} 度\n")
