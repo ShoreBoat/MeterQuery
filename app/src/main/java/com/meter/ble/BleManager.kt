@@ -44,11 +44,14 @@ class BleManager(private val context: Context) {
     private var commandSent = false
     private var frameReceived = false
     private var servicesStarted = false
+    @Volatile private var busy = false
 
     private fun log(m: String) = handler.post { listener?.onLog(m) }
     private fun err(m: String) = handler.post { listener?.onError(m) }
 
     fun readOnce(address: String, nameKw: String, cmdHex: String, l: Listener) {
+        if (busy) { l.onLog("上一次查询还在进行,已忽略本次"); return }
+        busy = true
         listener = l
         targetAddress = MeterProtocol.normalizeAddress(address)
         nameKeyword = nameKw.uppercase()
@@ -57,7 +60,7 @@ class BleManager(private val context: Context) {
         frameReceived = false
         servicesStarted = false
         val a = adapter
-        if (a == null || !a.isEnabled) { err("蓝牙未开启"); return }
+        if (a == null || !a.isEnabled) { err("蓝牙未开启"); busy = false; return }
         startScan()
     }
 
@@ -65,15 +68,14 @@ class BleManager(private val context: Context) {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val dev = result.device
             val name = (dev.name ?: result.scanRecord?.deviceName ?: "")
-            val addrMatch = MeterProtocol.normalizeAddress(dev.address ?: "") == targetAddress
-            val nameMatch = nameKeyword.isNotEmpty() && name.uppercase().contains(nameKeyword)
-            if (addrMatch || nameMatch) {
+            // 只按MAC地址精确匹配,不按名字(避免连到邻居同型号表)
+            if (MeterProtocol.normalizeAddress(dev.address ?: "") == targetAddress) {
                 log("发现目标: $name ${dev.address} RSSI=${result.rssi}")
                 stopScan()
                 connect(dev)
             }
         }
-        override fun onScanFailed(errorCode: Int) { err("扫描失败 code=$errorCode") }
+        override fun onScanFailed(errorCode: Int) { err("扫描失败 code=$errorCode"); busy = false }
     }
 
     private fun startScan() {
@@ -84,7 +86,7 @@ class BleManager(private val context: Context) {
         s.startScan(null, settings, scanCallback)
         log("开始扫描... (15s)")
         handler.postDelayed({
-            if (scanner) { stopScan(); err("扫描超时：未发现表，确认小程序已退出、手机贴近电表") }
+            if (scanner) { stopScan(); err("扫描超时：未发现表，确认小程序已退出、手机贴近电表"); busy = false }
         }, 15000)
     }
 
@@ -248,5 +250,6 @@ class BleManager(private val context: Context) {
     private fun cleanup() {
         try { gatt?.close() } catch (_: Exception) {}
         gatt = null
+        busy = false
     }
 }
