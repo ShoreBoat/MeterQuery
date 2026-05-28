@@ -181,34 +181,45 @@ class BleManager(private val context: Context) {
         return null
     }
 
-    private fun writeCommand(g: BluetoothGatt) {
-        if (commandSent) return
-        val writeChar = findChar(g, WRITE_UUID)
-        if (writeChar == null) { err("找不到 write 特征 FFF1"); return }
-        commandSent = true
-        val bytes = MeterProtocol.hexToBytes(commandHex)
-        // 优先用带响应的写(更可靠)；若特征不支持则退回无响应
-        val canWriteDefault = (writeChar.properties and
-            BluetoothGattCharacteristic.PROPERTY_WRITE) != 0
-        val writeType = if (canWriteDefault)
-            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-        else BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+    private val FFF3_UUID: UUID = UUID.fromString("0000fff3-0000-1000-8000-00805f9b34fb")
 
+    /** 往指定特征用无响应方式写命令(与Python脚本 response=False 一致) */
+    private fun writeTo(g: BluetoothGatt, charUuid: UUID, bytes: ByteArray): Boolean {
+        val ch = findChar(g, charUuid) ?: return false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            g.writeCharacteristic(writeChar, bytes, writeType)
+            g.writeCharacteristic(ch, bytes, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
         } else {
             @Suppress("DEPRECATION")
             run {
-                writeChar.writeType = writeType
-                writeChar.value = bytes
-                g.writeCharacteristic(writeChar)
+                ch.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                ch.value = bytes
+                g.writeCharacteristic(ch)
             }
         }
-        log("已发送命令(type=$writeType): $commandHex")
-        // 发命令后给8秒等数据，超时还没收到就报告
+        return true
+    }
+
+    private fun writeCommand(g: BluetoothGatt) {
+        if (commandSent) return
+        commandSent = true
+        val bytes = MeterProtocol.hexToBytes(commandHex)
+
+        // 先往 fff1 无响应写(与Python一致)
+        val okFff1 = writeTo(g, WRITE_UUID, bytes)
+        log("已发送命令到fff1(无响应,ok=$okFff1): $commandHex")
+
+        // 3秒还没收到就自动改试 fff3
         handler.postDelayed({
-            if (!frameReceived) { err("发命令后8秒未收到数据，可能命令格式或notify不对"); disconnect() }
-        }, 8000)
+            if (!frameReceived) {
+                val okFff3 = writeTo(g, FFF3_UUID, bytes)
+                log("3秒无回应，改发fff3(ok=$okFff3)")
+            }
+        }, 3000)
+
+        // 总超时10秒
+        handler.postDelayed({
+            if (!frameReceived) { err("发命令后未收到数据，fff1/fff3都试过了"); disconnect() }
+        }, 10000)
     }
 
     fun disconnect() { try { gatt?.disconnect() } catch (_: Exception) {} }
