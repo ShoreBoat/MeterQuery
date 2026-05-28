@@ -111,7 +111,7 @@ class MainActivity : AppCompatActivity(), BleManager.Listener {
             }
         }
         handler.post(task)
-        onlog("定时监控已开启，每 ${intervalMin} 分钟一次")
+        onLog("定时监控已开启，每 ${intervalMin} 分钟一次")
     }
 
     // ---- BleManager.Listener ----
