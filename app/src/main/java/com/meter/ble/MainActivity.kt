@@ -111,7 +111,7 @@ class MainActivity : AppCompatActivity(), BleManager.Listener {
             }
         }
         handler.post(task)
-        onLog("定时监控已开启，每 ${intervalMin} 分钟一次")
+        log("定时监控已开启，每 ${intervalMin} 分钟一次")
     }
 
     // ---- BleManager.Listener ----
@@ -131,19 +131,15 @@ class MainActivity : AppCompatActivity(), BleManager.Listener {
             try {
                 val r = MeterProtocol.parseResponse(rawHex)
                 val sb = StringBuilder()
-                sb.append("原始帧: $rawHex\n\n")
+                sb.append("剩余电量: ${r.leftKwh} 度\n")
+                sb.append("总用量: ${r.totalKwh} 度\n")
                 sb.append("数据标识: ${r.dataId}\n")
-                sb.append("剩余金额(猜): ${r.leftMoney}\n")
-                sb.append("已用金额(猜): ${r.usedMoney}\n")
-                sb.append("电流(猜): ${r.currentA} A\n")
-                sb.append("剩余电量候选: ${r.leftKwhCandidates}\n")
-                sb.append("payload: ${r.payloadHex}\n")
-                sb.append("u32块: ${r.rawChunks}\n")
+                sb.append("原始帧: $rawHex\n")
                 resultView.text = sb.toString()
 
-                // 阈值判断：用剩余电量候选的第一个(待你确认偏移后改成准确字段)
+                // 阈值判断：剩余电量低于阈值时提醒
                 val threshold = thresholdInput.text.toString().toDoubleOrNull()
-                val left = r.leftKwhCandidates.firstOrNull()
+                val left = r.leftKwh
                 if (threshold != null && left != null) {
                     if (left <= threshold && !lastAlerted) {
                         notifyLow(left, threshold); lastAlerted = true
