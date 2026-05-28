@@ -106,8 +106,8 @@ class BleManager(private val context: Context) {
                 log("已连接(status=$status)，0.6s后请求MTU...")
                 // 连接后稍等再请求MTU，国产模块需要缓冲
                 handler.postDelayed({
-                    val ok = g.requestMtu(247)
-                    log("请求MTU(247) ok=$ok")
+                    val ok = g.requestMtu(100)
+                    log("请求MTU(100) ok=$ok")
                     // 兜底:万一onMtuChanged不回调,1.5s后强制发现服务
                     handler.postDelayed({
                         if (!servicesStarted) {
@@ -237,10 +237,10 @@ class BleManager(private val context: Context) {
             }
         }, 3000)
 
-        // 总超时10秒
+        // 总超时20秒(此模块响应可能较慢)
         handler.postDelayed({
-            if (!frameReceived) { err("发命令后未收到数据，fff1/fff3都试过了"); disconnect() }
-        }, 10000)
+            if (!frameReceived) { err("发命令后20秒未收到数据，fff1/fff3都试过了"); disconnect() }
+        }, 20000)
     }
 
     fun disconnect() { try { gatt?.disconnect() } catch (_: Exception) {} }
