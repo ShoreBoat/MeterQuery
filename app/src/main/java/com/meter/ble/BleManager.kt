@@ -43,6 +43,7 @@ class BleManager(private val context: Context) {
     private var commandHex: String = ""
     private var commandSent = false
     private var frameReceived = false
+    private var servicesStarted = false
 
     private fun log(m: String) = handler.post { listener?.onLog(m) }
     private fun err(m: String) = handler.post { listener?.onError(m) }
@@ -54,6 +55,7 @@ class BleManager(private val context: Context) {
         commandHex = cmdHex
         commandSent = false
         frameReceived = false
+        servicesStarted = false
         val a = adapter
         if (a == null || !a.isEnabled) { err("蓝牙未开启"); return }
         startScan()
@@ -101,13 +103,32 @@ class BleManager(private val context: Context) {
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                log("已连接(status=$status)，0.6s后发现服务...")
-                // 连接后稍等再发现服务，国产模块需要缓冲
-                handler.postDelayed({ g.discoverServices() }, 600)
+                log("已连接(status=$status)，0.6s后请求MTU...")
+                // 连接后稍等再请求MTU，国产模块需要缓冲
+                handler.postDelayed({
+                    val ok = g.requestMtu(247)
+                    log("请求MTU(247) ok=$ok")
+                    // 兜底:万一onMtuChanged不回调,1.5s后强制发现服务
+                    handler.postDelayed({
+                        if (!servicesStarted) {
+                            servicesStarted = true
+                            log("MTU无回调,兜底发现服务...")
+                            g.discoverServices()
+                        }
+                    }, 1500)
+                }, 600)
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 log("连接断开 status=$status")
                 if (!frameReceived) err("断开前未收到数据 (status=$status)")
                 cleanup()
+            }
+        }
+
+        override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
+            log("MTU协商完成 mtu=$mtu status=$status")
+            if (!servicesStarted) {
+                servicesStarted = true
+                handler.postDelayed({ log("发现服务..."); g.discoverServices() }, 200)
             }
         }
 
