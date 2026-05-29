@@ -24,6 +24,8 @@ class MeterService : Service() {
         const val CH_ALERT = "meter_alert"       // 低电量提醒渠道
         const val NOTIF_ID = 1001
         const val ALERT_ID = 1002
+        const val ACTION_START = "com.meter.ble.START"
+        const val ACTION_STOP = "com.meter.ble.STOP"
         @Volatile var running = false
     }
 
@@ -43,6 +45,15 @@ class MeterService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            running = false
+            pollTask?.let { handler.removeCallbacks(it) }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N)
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            else @Suppress("DEPRECATION") stopForeground(true)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         scheduleNext(0)  // 立即查一次,然后按间隔循环
         return START_STICKY  // 被系统杀掉后尽量重启
     }

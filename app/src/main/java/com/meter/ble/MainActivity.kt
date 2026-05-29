@@ -6,10 +6,12 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
+import android.view.Gravity
+import android.view.View
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -20,99 +22,184 @@ class MainActivity : AppCompatActivity(), BleManager.Listener {
 
     private lateinit var ble: BleManager
     private lateinit var logView: TextView
-    private lateinit var resultView: TextView
+    private lateinit var bigValue: TextView
+    private lateinit var subValue: TextView
     private lateinit var addrInput: EditText
-    private lateinit var nameInput: EditText
     private lateinit var thresholdInput: EditText
     private lateinit var intervalInput: EditText
-
-    private val handler = Handler(Looper.getMainLooper())
-    private var polling = false
+    private lateinit var pollBtn: Button
     private var lastAlerted = false
 
-    private val CHANNEL_ID = "meter_alert"
+    private val GREEN = Color.parseColor("#2E7D32")
+    private val GREEN_LIGHT = Color.parseColor("#E8F5E9")
+    private val GREY = Color.parseColor("#9E9E9E")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ble = BleManager(this)
-        createChannel()
         setContentView(buildUi())
         requestPerms()
+        refreshFromStore()
+    }
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private fun card(): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(20), dp(20), dp(20))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(16).toFloat()
+                setColor(Color.WHITE)
+            }
+            val lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            lp.bottomMargin = dp(16)
+            layoutParams = lp
+            elevation = dp(2).toFloat()
+        }
+    }
+
+    private fun fieldLabel(t: String) = TextView(this).apply {
+        text = t; textSize = 13f; setTextColor(GREY); setPadding(0, dp(12), 0, dp(2))
+    }
+
+    private fun styledButton(t: String, primary: Boolean): Button = Button(this).apply {
+        text = t
+        isAllCaps = false
+        textSize = 16f
+        setTextColor(if (primary) Color.WHITE else GREEN)
+        background = GradientDrawable().apply {
+            cornerRadius = dp(12).toFloat()
+            if (primary) setColor(GREEN) else {
+                setColor(Color.WHITE); setStroke(dp(2), GREEN)
+            }
+        }
+        val lp = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(52)
+        )
+        lp.topMargin = dp(12)
+        layoutParams = lp
     }
 
     private fun buildUi(): ScrollView {
-        val root = ScrollView(this)
+        val root = ScrollView(this).apply {
+            setBackgroundColor(Color.parseColor("#F2F4F3"))
+        }
         val ll = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(40, 40, 40, 40)
+            setPadding(dp(16), dp(24), dp(16), dp(24))
         }
 
-        fun label(t: String) = TextView(this).apply { text = t; textSize = 14f; setPadding(0,20,0,4) }
+        // 标题
+        ll.addView(TextView(this).apply {
+            text = "电表监控"
+            textSize = 24f
+            setTextColor(Color.parseColor("#212121"))
+            setPadding(dp(4), 0, 0, dp(16))
+        })
 
-        ll.addView(TextView(this).apply { text = "电表监控"; textSize = 22f; setPadding(0,0,0,20) })
+        // 大数字卡片
+        val valueCard = card().apply {
+            background = GradientDrawable().apply {
+                cornerRadius = dp(16).toFloat(); setColor(GREEN)
+            }
+            gravity = Gravity.CENTER
+        }
+        bigValue = TextView(this).apply {
+            text = "-- 度"
+            textSize = 40f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+        }
+        subValue = TextView(this).apply {
+            text = "剩余电量"
+            textSize = 14f
+            setTextColor(GREEN_LIGHT)
+            gravity = Gravity.CENTER
+        }
+        valueCard.addView(bigValue)
+        valueCard.addView(subValue)
+        ll.addView(valueCard)
 
-        ll.addView(label("电表地址"))
-        addrInput = EditText(this).apply { setText("A2:50:72:78:25:51") }
-        ll.addView(addrInput)
-
-        ll.addView(label("名字关键字"))
-        nameInput = EditText(this).apply { setText("NS-DDS-BLE") }
-        ll.addView(nameInput)
-
-        ll.addView(label("提醒阈值(剩余电量,度)"))
+        // 设置卡片
+        val cfgCard = card()
+        cfgCard.addView(fieldLabel("电表地址"))
+        addrInput = EditText(this).apply { setText("A2:50:72:78:25:51"); textSize = 15f }
+        cfgCard.addView(addrInput)
+        cfgCard.addView(fieldLabel("提醒阈值 (剩余电量, 度)"))
         thresholdInput = EditText(this).apply {
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-            setText("10")
+            setText("10"); textSize = 15f
         }
-        ll.addView(thresholdInput)
-
-        ll.addView(label("查询间隔(分钟)"))
+        cfgCard.addView(thresholdInput)
+        cfgCard.addView(fieldLabel("查询间隔 (分钟)"))
         intervalInput = EditText(this).apply {
             inputType = android.text.InputType.TYPE_CLASS_NUMBER
-            setText("60")
+            setText("60"); textSize = 15f
         }
-        ll.addView(intervalInput)
+        cfgCard.addView(intervalInput)
+        ll.addView(cfgCard)
 
-        val readBtn = Button(this).apply { text = "立即查询一次" }
+        // 按钮卡片
+        val btnCard = card()
+        val readBtn = styledButton("立即查询一次", true)
         readBtn.setOnClickListener { readOnce() }
-        ll.addView(readBtn)
+        btnCard.addView(readBtn)
 
-        val pollBtn = Button(this).apply {
-            text = if (MeterService.running) "停止后台监控" else "开始后台监控(锁屏也跑)"
-        }
-        pollBtn.setOnClickListener {
-            if (!MeterService.running) {
-                saveConfig()
-                val i = Intent(this, MeterService::class.java)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                    startForegroundService(i) else startService(i)
-                pollBtn.text = "停止后台监控"
-                onLog("后台监控已开启,每 ${intervalInput.text} 分钟查一次,锁屏也运行")
-            } else {
-                stopService(Intent(this, MeterService::class.java))
-                pollBtn.text = "开始后台监控(锁屏也跑)"
-                onLog("后台监控已停止")
-            }
-        }
-        ll.addView(pollBtn)
+        pollBtn = styledButton(if (MeterService.running) "停止后台监控" else "开始后台监控 (锁屏也跑)", false)
+        pollBtn.setOnClickListener { togglePolling() }
+        btnCard.addView(pollBtn)
+        ll.addView(btnCard)
 
-        ll.addView(label("解析结果"))
-        resultView = TextView(this).apply { text = "—"; textSize = 13f }
-        ll.addView(resultView)
-
-        ll.addView(label("日志"))
-        logView = TextView(this).apply { text = ""; textSize = 11f }
-        ll.addView(logView)
+        // 日志卡片
+        val logCard = card()
+        logCard.addView(fieldLabel("日志"))
+        logView = TextView(this).apply { text = ""; textSize = 11f; setTextColor(GREY) }
+        logCard.addView(logView)
+        ll.addView(logCard)
 
         root.addView(ll)
         return root
     }
 
+    private fun togglePolling() {
+        if (!MeterService.running) {
+            saveConfig()
+            val i = Intent(this, MeterService::class.java).apply { action = MeterService.ACTION_START }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(i)
+            else startService(i)
+            pollBtn.text = "停止后台监控"
+            onLog("后台监控已开启,每 ${intervalInput.text} 分钟一次,锁屏也运行")
+        } else {
+            val i = Intent(this, MeterService::class.java).apply { action = MeterService.ACTION_STOP }
+            startService(i)
+            pollBtn.text = "开始后台监控 (锁屏也跑)"
+            onLog("后台监控已停止")
+        }
+    }
+
+    private fun refreshFromStore() {
+        val left = MeterStore.leftKwh(this)
+        if (left >= 0) {
+            bigValue.text = "%.2f 度".format(left)
+            subValue.text = "剩余电量 · 更新于 " + timeStr(MeterStore.updatedAt(this))
+        }
+    }
+
+    private fun timeStr(ms: Long): String {
+        if (ms <= 0) return "--"
+        val c = java.util.Calendar.getInstance().apply { timeInMillis = ms }
+        return "%02d:%02d".format(c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE))
+    }
+
     private fun readOnce() {
-        resultView.text = "查询中..."
+        bigValue.text = "查询中…"
         saveConfig()
         val cmd = MeterProtocol.buildCommand(addrInput.text.toString())
-        ble.readOnce(addrInput.text.toString(), nameInput.text.toString(), cmd, this)
+        ble.readOnce(addrInput.text.toString(), "", cmd, this)
     }
 
     private fun saveConfig() {
@@ -122,15 +209,15 @@ class MainActivity : AppCompatActivity(), BleManager.Listener {
         MeterStore.saveConfig(this, addr, th, interval)
     }
 
-    // ---- BleManager.Listener ----
     override fun onLog(msg: String) {
-        runOnUiThread { logView.text = "$msg\n${logView.text}".take(2000) }
+        runOnUiThread { logView.text = "$msg\n${logView.text}".take(1500) }
     }
 
     override fun onError(msg: String) {
         runOnUiThread {
-            logView.text = "❌ $msg\n${logView.text}".take(2000)
-            resultView.text = "查询失败: $msg"
+            logView.text = "❌ $msg\n${logView.text}".take(1500)
+            bigValue.text = "查询失败"
+            subValue.text = msg.take(20)
         }
     }
 
@@ -138,46 +225,42 @@ class MainActivity : AppCompatActivity(), BleManager.Listener {
         runOnUiThread {
             try {
                 val r = MeterProtocol.parseResponse(rawHex)
-                r.leftKwh?.let { l -> MeterStore.save(this, l, r.totalKwh ?: -1.0); MeterWidget.refresh(this) }
-                val sb = StringBuilder()
-                sb.append("剩余电量: ${r.leftKwh} 度\n")
-                sb.append("总用量: ${r.totalKwh} 度\n")
-                sb.append("数据标识: ${r.dataId}\n")
-                sb.append("原始帧: $rawHex\n")
-                resultView.text = sb.toString()
-
-                // 阈值判断：剩余电量低于阈值时提醒
-                val threshold = thresholdInput.text.toString().toDoubleOrNull()
                 val left = r.leftKwh
-                if (threshold != null && left != null) {
-                    if (left <= threshold && !lastAlerted) {
-                        notifyLow(left, threshold); lastAlerted = true
-                    } else if (left > threshold) lastAlerted = false
+                if (left != null) {
+                    MeterStore.save(this, left, r.totalKwh ?: -1.0)
+                    MeterWidget.refresh(this)
+                    bigValue.text = "%.2f 度".format(left)
+                    subValue.text = "剩余电量 · 总用 ${r.totalKwh} 度"
+                    onLog("查询成功: 剩余 $left 度")
+                    val threshold = thresholdInput.text.toString().toDoubleOrNull()
+                    if (threshold != null) {
+                        if (left <= threshold && !lastAlerted) { notifyLow(left, threshold); lastAlerted = true }
+                        else if (left > threshold) lastAlerted = false
+                    }
                 }
             } catch (e: Exception) {
-                resultView.text = "解析失败: ${e.message}\n原始: $rawHex"
+                onLog("解析失败: ${e.message}")
             }
         }
     }
 
-    private fun createChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val ch = NotificationChannel(CHANNEL_ID, "电表提醒", NotificationManager.IMPORTANCE_HIGH)
-            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
-        }
-    }
-
     private fun notifyLow(left: Double, threshold: Double) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(
+                NotificationChannel(MeterService.CH_ALERT, "电量提醒", NotificationManager.IMPORTANCE_HIGH)
+            )
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED) return
-        val n = NotificationCompat.Builder(this, CHANNEL_ID)
+        val n = NotificationCompat.Builder(this, MeterService.CH_ALERT)
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setContentTitle("电表电量偏低")
-            .setContentText("剩余约 $left 度，已低于阈值 $threshold 度，请及时充值")
+            .setContentText("剩余约 $left 度,已低于阈值 $threshold 度,请及时充值")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
             .build()
-        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(1, n)
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(1002, n)
     }
 
     private fun requestPerms() {
